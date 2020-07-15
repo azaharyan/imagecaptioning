@@ -4,15 +4,16 @@ import os
 import numpy as np
 import sklearn.model_selection
 import tensorflow as tf
+import joblib
 
 
 IMAGE_SIZE = 299
 NUM_CHANNELS = 3
-EMBEDDING_FILE = './embeddings/glove.6B.200d.txt'
+EMBEDDING_FILE = '../embeddings/glove.6B.200d.txt'
 EMBEDDING_SIZE = 200
-PICKLE_EMBEDDINGS = './pickles/embeddings.pickle'
-PICKLE_DATASETS = './pickles/datasets.pickle'
-IMAGE_PREFIX = './data/flickr30/flickr30k_images/'
+PICKLE_EMBEDDINGS = '../pickles/embeddings.pickle'
+PICKLE_DATASETS = '../pickles/datasets.pickle'
+IMAGE_PREFIX = '../data/flickr30/flickr30k_images/'
 RECORDS_LIMIT = 10000
 
 
@@ -28,7 +29,7 @@ class Preprocessor:
         x_data = []
         y_data = []
 
-        with open('./data/flickr30/results.csv') as csv_file:
+        with open('../data/flickr30/results.csv') as csv_file:
             csv_reader = csv.reader(csv_file, delimiter='|')
             errors = 0
             processed = 0
@@ -73,7 +74,7 @@ class Preprocessor:
                 # 'x_valid': x_valid,
                 'y_valid': y_valid
             }
-            pickle.dump(datasets, pickle_f)
+            joblib.dump(datasets, pickle_f)
             print(f'Pickle file with all datasets saved: {PICKLE_DATASETS}')
 
     def _parse_embeddings(self):
@@ -82,13 +83,13 @@ class Preprocessor:
             with open(PICKLE_EMBEDDINGS, 'rb') as pickle_f:
                 self.embedding_map = pickle.load(pickle_f)
         else:
-            with open(EMBEDDING_FILE) as f:
+            with open(EMBEDDING_FILE, encoding="utf8") as f:
                 for row in f:
                     tokens = row.split(' ')
                     self.embedding_map[tokens[0]] = [float(num) for num in tokens[1:]]
         
             with open(PICKLE_EMBEDDINGS, 'wb') as pickle_f:
-                pickle.dump(self.embedding_map, pickle_f)
+                joblib.dump(self.embedding_map, pickle_f)
                 print(f'Pickle file with all embeddings saved: {PICKLE_EMBEDDINGS}')
 
         print(f'Dictionary size: {len(self.embedding_map)}')
