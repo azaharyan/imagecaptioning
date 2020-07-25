@@ -132,3 +132,4 @@ dmypy.json
 data/
 embeddings/*.txt
 pickles/
+model/

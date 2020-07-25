@@ -28,7 +28,7 @@ def hms_string(sec_elapsed):
     m = int((sec_elapsed % (60 * 60)) / 60)
     s = sec_elapsed % 60
     return f"{h}:{m:>02}:{s:>05.2f}"
-
+from PIL import Image
 
 class ImagePreprocessor:
 
@@ -37,7 +37,7 @@ class ImagePreprocessor:
         self.encode_model = Model(encode_model.input, encode_model.layers[-2].output)
         self.preprocess_input = tensorflow.keras.applications.inception_v3.preprocess_input
 
-        encode_model.summary()
+        # encode_model.summary()
 
     def run(self, images, images_folder, pickle_file):
         if not os.path.exists(pickle_file):
@@ -45,8 +45,9 @@ class ImagePreprocessor:
             image_encoddings = {}
             for id in tqdm(images):
                 image_path = os.path.join(images_folder, id + '.jpg')
-                img = tensorflow.keras.preprocessing.image.load_img(image_path, target_size=(HEIGHT, WIDTH))
-                image_encoddings[id] = self._encode_image(img)
+                if os.path.exists(image_path):
+                    img = tensorflow.keras.preprocessing.image.load_img(image_path, target_size=(HEIGHT, WIDTH))
+                    image_encoddings[id] = self._encode_image(img)
 
             with open(pickle_file, "wb") as fp:
                 pickle.dump(image_encoddings, fp)
