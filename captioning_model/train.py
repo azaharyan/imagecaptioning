@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 EMBEDDING_DIM = 200
 IMAGE_OUTPUT_DIM = 2048
-EPOCHS = 10
+EPOCHS = 1
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
 UNK_TOKEN = '<unk>'
@@ -103,7 +103,7 @@ def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, capt
 
 
 def generate_test_set_captions(test_img_encoddings, word_to_idx, idx_to_word, max_length, caption_model):
-    for image_key in list(test_img_encoddings.keys())[0:20]:
+    for image_key in list(test_img_encoddings.keys())[20:30]:
         image_path = os.path.join('../data/flickr8/Flicker8k_Dataset/', image_key + '.jpg')
         if os.path.exists(image_path):
             image = test_img_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
@@ -145,16 +145,16 @@ def perform_training():
 
     # Text preprocessing
     text_preprocessor = TextPreprocessor('../data/flickr8/Flickr8k.token.txt')
-    text_preprocessor.run()    
+    text_preprocessor.load_and_process_descriptions()    
 
     # Create/load image embeddings from InceptionV3
     encodding_train, encodding_test = generate_image_encoddings()
-    train_descriptions = text_preprocessor.create_train_descriptions(set(encodding_train.keys()))
+    train_descriptions = text_preprocessor.create_training_setup(set(encodding_train.keys()))
     
-    vocab = text_preprocessor.get_vocab(train_descriptions)
+    vocab = text_preprocessor.get_vocab()
     idx_to_word = text_preprocessor.get_idx_to_word()
     word_to_idx = text_preprocessor.get_word_to_idx()
-    vocab_size = len(vocab) + 1 # Since 0 as word id is reserved by Keras for padding
+    vocab_size = len(vocab)
     max_length = text_preprocessor.get_max_length()
 
     # # Datasets separation
@@ -202,13 +202,13 @@ def perform_training():
     # caption_model.summary()
     
     # Actual training
-    model_path = os.path.join('./model', 'caption-model8k.hdf5')
+    model_path = os.path.join('./model', 'caption-model8kv3.hdf5')
     if not os.path.exists(model_path):
         start = time()
 
         number_pics_per_bath = 3
         steps = len(train_descriptions) // number_pics_per_bath
-        for i in tqdm(range(EPOCHS * 2)):
+        for i in tqdm(range(EPOCHS)):
             generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
             caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)
 

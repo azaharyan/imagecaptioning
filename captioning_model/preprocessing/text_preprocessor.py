@@ -17,7 +17,7 @@ class TextPreprocessor:
     def __init__(self, file_name):
         self.file_name = file_name
     
-    def run(self):
+    def load_and_process_descriptions(self):
         null_punct = str.maketrans('', '', string.punctuation)
         lookup = dict()
 
@@ -36,25 +36,16 @@ class TextPreprocessor:
                     desc = [word for word in desc if word.isalpha()]
 
                     if len(desc) <= DESCRIPTION_LIMIT:
-                        max_length = max(max_length,len(desc))
                         if id not in lookup:
                             lookup[id] = list()
-                        # lookup[id].append(f'{START_TOKEN} {" ".join(desc)} {END_TOKEN}')
                         lookup[id].append(" ".join(desc))
-                    
-        lex = set()
-        for key in lookup:
-            [lex.update(d.split()) for d in lookup[key]]
 
         self.lookup = lookup
-        self.max_length = max_length
-        log.warn(f'Number of description unique words: {len(lex)}')
-        log.warn(f'Number of images: {len(lookup)}')
-        log.warn(f'Max length description with hard limit of {DESCRIPTION_LIMIT}: {max_length}')
-        # self._create_vocabulary(lex, lookup)
+        log.warning(f'Number of images: {len(lookup)}')
+        return lookup
 
-    def get_vocab(self, train_descriptions):
-        return self._create_vocabulary(train_descriptions)
+    def get_vocab(self):
+        return self.vocab
 
     def get_word_to_idx(self):
         return self.word_to_idx
@@ -68,14 +59,14 @@ class TextPreprocessor:
     def get_lookup_table(self):
         return self.lookup
     
-    def create_train_descriptions(self, train_images):
+    def create_training_setup(self, train_images):
         train_descriptions = {k:v for k,v in self.lookup.items() if k in train_images}
         for _,v in train_descriptions.items(): 
             for d in range(len(v)):
                 v[d] = f'{START_TOKEN} {v[d]} {END_TOKEN}'
 
-        self.max_length += 2
         log.warning(f'TRAIN DESCRIPTIONS LENGTH: {len(train_descriptions)}')
+        self._create_vocabulary(train_descriptions)
         return train_descriptions
 
     def _create_vocabulary(self, train_descriptions):
@@ -85,22 +76,28 @@ class TextPreprocessor:
         log.warning(f'All captions: {len(all_captions)}')
 
         word_count = {}
+        max_length = 0
         for caption in all_captions:
-            for word in caption.split():
+            tokens = caption.split()
+            max_length = max(max_length, len(tokens))
+            for word in tokens:
                 word_count[word] = word_count.get(word, 0) + 1
+        
+        self.max_length = max_length
+        log.warning(f'Max length description with hard limit of {DESCRIPTION_LIMIT}: {max_length}')
+        log.warning(f'Number of description unique words: {len(word_count)}')
         
         # Keras padding adds 0 for padding, that's why we include such word which we do not use
         # Also additional word is included for all words which count is less than the limit
-        # self.vocab = ['<padding>']
-        vocab = [word for word in word_count if word_count[word] >= WORD_OCCURANCE_LIMIT]
+        vocab = ['<padding>']
+        vocab.extend([word for word in word_count if word_count[word] >= WORD_OCCURANCE_LIMIT])
         # self.vocab.append('<unk>')
+        self.vocab = vocab
         log.warning(f'Vocabulary size with words occurred at least {WORD_OCCURANCE_LIMIT} times: {len(vocab)}')
         log.warning(f'VOCAB: {vocab[0: 30]} {vocab[-30:]}')
 
         self.word_to_idx = {}
         self.idx_to_word = {}
         for ind, word in enumerate(vocab):
-            self.idx_to_word[ind + 1] = word
-            self.word_to_idx[word] = ind + 1
-        
-        return vocab
+            self.idx_to_word[ind] = word
+            self.word_to_idx[word] = ind
