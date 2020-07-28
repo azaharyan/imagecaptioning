@@ -1,6 +1,7 @@
 import string
 from tqdm import tqdm
 import logging
+import pickle
 
 
 logging.basicConfig(level='WARNING')
@@ -11,6 +12,7 @@ WORD_OCCURANCE_LIMIT = 10
 
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
+UNK_TOKEN = '<unk>'
 
 
 class TextPreprocessor:
@@ -22,12 +24,13 @@ class TextPreprocessor:
         lookup = dict()
 
         with open(self.file_name, 'r') as fp:
-            max_length = 0
+            # Read CSV headers
+            fp.readline()
             for line in tqdm(fp.read().splitlines()):
-                sections = line.split()
-                if len(sections) >= 2:
+                sections = line.split('|')
+                if len(sections) >= 3:
                     id = sections[0].split('.')[0]
-                    desc = sections[1: ]
+                    desc = sections[2].split()
    
                     # Remove very short words, punctuation and clear description
                     desc = [word.lower().strip() for word in desc]
@@ -64,9 +67,16 @@ class TextPreprocessor:
         for _,v in train_descriptions.items(): 
             for d in range(len(v)):
                 v[d] = f'{START_TOKEN} {v[d]} {END_TOKEN}'
-
         log.warning(f'TRAIN DESCRIPTIONS LENGTH: {len(train_descriptions)}')
+
         self._create_vocabulary(train_descriptions)
+        # Remove words not in the vocabulary and replace with UNK_TOKEN
+        for _,v in train_descriptions.items(): 
+            for d in range(len(v)):
+                tokens = v[d].split()
+                tokens = [(token if token in self.vocab else UNK_TOKEN) for token in tokens]
+                v[d] = ' '.join(tokens)
+
         return train_descriptions
 
     def _create_vocabulary(self, train_descriptions):
@@ -91,6 +101,7 @@ class TextPreprocessor:
         # Also additional word is included for all words which count is less than the limit
         vocab = ['<padding>']
         vocab.extend([word for word in word_count if word_count[word] >= WORD_OCCURANCE_LIMIT])
+        vocab.append(UNK_TOKEN)
         # self.vocab.append('<unk>')
         self.vocab = vocab
         log.warning(f'Vocabulary size with words occurred at least {WORD_OCCURANCE_LIMIT} times: {len(vocab)}')
@@ -101,3 +112,18 @@ class TextPreprocessor:
         for ind, word in enumerate(vocab):
             self.idx_to_word[ind] = word
             self.word_to_idx[word] = ind
+        
+        self._create_vocab_pickle()
+
+    def _create_vocab_pickle(self):
+        pickle_obj = {
+            'word_to_idx': self.word_to_idx,
+            'idx_to_word': self.idx_to_word,
+            'vocab': self.vocab,
+            'max_length': self.max_length,
+            'lookup': self.lookup
+        }
+
+        with open('./pickles/vocab_30k.pkl', "wb") as fp:
+            pickle.dump(pickle_obj, fp)
+        log.warning(f'VOCAB saved as pickle file!')

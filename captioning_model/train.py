@@ -24,9 +24,10 @@ import glob
 logging.basicConfig(level='WARNING')
 log = logging.getLogger(__name__)
 
+
 EMBEDDING_DIM = 200
 IMAGE_OUTPUT_DIM = 2048
-EPOCHS = 1
+EPOCHS = 10
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
 UNK_TOKEN = '<unk>'
@@ -57,7 +58,7 @@ def data_generator(descriptions, image_encoddings, word_to_idx, max_length, voca
         #     lambda word: word_to_idx[word] if word in word_to_idx else word_to_idx['<unk>'],
         #     desc.split())
         # )
-        seq = [word_to_idx[word] for word in desc.split(' ') if word in word_to_idx]
+        seq = [word_to_idx[word] for word in desc.split(' ')]
         # Generate a training case for every possible sequence and outcome
         for i in range(1, len(seq)):
           in_seq, out_seq = seq[:i], seq[i]
@@ -74,81 +75,46 @@ def data_generator(descriptions, image_encoddings, word_to_idx, max_length, voca
 
 def load_glove_embeddings(glove_file):
     glove_embeddings = {}
+    embeddings = []
     with open(glove_file, 'r') as f:
         for line in tqdm(f):
             tokens = line.split()
             word = tokens[0]
             coeffs = np.asarray(tokens[1:], dtype='float32')
             glove_embeddings[tokens[0]] = coeffs
+            embeddings.append(coeffs)
     
+    glove_embeddings[UNK_TOKEN] = np.mean(coeffs, axis=0)
     log.warning(f'Loaded Glove embeddings, words found: {len(glove_embeddings)}')
     return glove_embeddings
 
-def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, caption_model):
-    in_text = START_TOKEN
-    for i in range(max_length):
-        sequence = [word_to_idx[w] for w in in_text.split() if w in word_to_idx]
-        sequence = pad_sequences([sequence], maxlen=max_length)
-        yhat = caption_model.predict([image_encodding, sequence], verbose=0)
-        yhat = np.argmax(yhat)
-        word = idx_to_word[yhat]
-        in_text += ' ' + word
-        if word == END_TOKEN:
-            break
 
-    # final = list(filter(lambda token: token not in {START_TOKEN, END_TOKEN, UNK_TOKEN}, in_text.split()))
-    # final = ' '.join(final)
-    # return final
-    return in_text
-
-
-def generate_test_set_captions(test_img_encoddings, word_to_idx, idx_to_word, max_length, caption_model):
-    for image_key in list(test_img_encoddings.keys())[20:30]:
-        image_path = os.path.join('../data/flickr8/Flicker8k_Dataset/', image_key + '.jpg')
-        if os.path.exists(image_path):
-            image = test_img_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
-            x=plt.imread(image_path)
-            print("Caption:", generate_caption(image, word_to_idx, idx_to_word, max_length, caption_model))
-            plt.imshow(x)
-            plt.show()
-            print("_____________________________________")
-
-def generate_image_encoddings():
-    img = glob.glob(os.path.join('../data/flickr8/Flicker8k_Dataset/', '*.jpg'))
-
-    train_images_path = os.path.join('../data/flickr8','Flickr8k_text','Flickr_8k.trainImages.txt') 
-    train_images = set(open(train_images_path, 'r').read().strip().split('\n'))
-    test_images_path = os.path.join('../data/flickr8','Flickr8k_text','Flickr_8k.testImages.txt') 
-    test_images = set(open(test_images_path, 'r').read().strip().split('\n'))
-
-    train_img = []
-    test_img = []
-
-    for i in tqdm(img):
-        f = os.path.split(i)[-1]
-        if f in train_images: 
-            train_img.append(f.split('.')[0]) 
-        elif f in test_images:
-            test_img.append(f.split('.')[0])
-    
-    log.warning(f'TRAIN IMAGES: {len(train_img)}')
-    log.warning(f'TEST IMAGES: {len(test_img)}')
-
+def generate_image_encoddings(images, images_folder):
     image_preprocessor = ImagePreprocessor()
-    encodding_train = image_preprocessor.run(train_img, '../data/flickr8/Flicker8k_Dataset/', './pickles/image_encodings_train_8k.pkl')
-    encodding_test = image_preprocessor.run(test_img, '../data/flickr8/Flicker8k_Dataset/', './pickles/image_encodings_test_8k.pkl')
+    image_encoddings = image_preprocessor.run(images, images_folder, './pickles/image_encodings_all_30k.pkl')
+
+    # Datasets separation
+    # We use the same training set all the time since the vocabulary is created based on it
+    # Can be modified in the future => not to load everything when only in predict mode
+    training_offset = int(len(images) * 0.8)
+    images_train = images[0: training_offset]
+    images_test = images[training_offset:]
+    
+    encodding_train = {img: enc for img, enc in tqdm(image_encoddings.items()) if img in images_train}
+    encodding_test = {img: enc for img, enc in tqdm(image_encoddings.items()) if img in images_test}
+    log.warning(f'Training images: {len(encodding_train)}')
+    log.warning(f'Test images: {len(encodding_test)}')
 
     return encodding_train, encodding_test
     
 
 def perform_training():
-
     # Text preprocessing
-    text_preprocessor = TextPreprocessor('../data/flickr8/Flickr8k.token.txt')
-    text_preprocessor.load_and_process_descriptions()    
+    text_preprocessor = TextPreprocessor('../data/flickr30/results.csv')
+    lookup_table = text_preprocessor.load_and_process_descriptions()
 
     # Create/load image embeddings from InceptionV3
-    encodding_train, encodding_test = generate_image_encoddings()
+    encodding_train, encodding_test = generate_image_encoddings(list(lookup_table.keys()), '../data/flickr30/flickr30k_images')
     train_descriptions = text_preprocessor.create_training_setup(set(encodding_train.keys()))
     
     vocab = text_preprocessor.get_vocab()
@@ -156,17 +122,6 @@ def perform_training():
     word_to_idx = text_preprocessor.get_word_to_idx()
     vocab_size = len(vocab)
     max_length = text_preprocessor.get_max_length()
-
-    # # Datasets separation
-    # keys_train, keys_test = train_test_split(list(image_encoddings.keys()), test_size = 0.2)
-    # train_img_encoddings = {k: v for k, v in tqdm(image_encoddings.items()) if k in keys_train}
-    # test_img_encoddings = {k: v for k, v in tqdm(image_encoddings.items()) if k in keys_test}
-    # train_img_descriptions = {k: v for k, v in tqdm(lookup_table.items()) if k in keys_train}
-    # test_img_descriptions = {k: v for k, v in tqdm(lookup_table.items()) if k in keys_test}
-    # log.warning(f'Training images: {len(train_img_encoddings)}')
-    # log.warning(f'Training descriptions: {len(train_img_descriptions)}')
-    # log.warning(f'Test images: {len(test_img_encoddings)}')
-    # log.warning(f'Test descriptions: {len(test_img_descriptions)}')
 
     # Load Glove embeddings
     word_embeddings = load_glove_embeddings('../embeddings/glove.6B.200d.txt')
@@ -181,7 +136,7 @@ def perform_training():
             log.error(f'WORD {word} not found in Glove embeddings')
     log.warning(f'Embedding matrix shape: {embedding_matrix.shape}')
 
-    # # Model creation
+    # Model creation
     inputs1 = Input(shape=(IMAGE_OUTPUT_DIM,))
     fe1 = Dropout(0.5)(inputs1)
     fe2 = Dense(256, activation='relu')(fe1)
@@ -202,7 +157,7 @@ def perform_training():
     # caption_model.summary()
     
     # Actual training
-    model_path = os.path.join('./model', 'caption-model8kv3.hdf5')
+    model_path = os.path.join('./model', 'caption-model30kv2.hdf5')
     if not os.path.exists(model_path):
         start = time()
 
@@ -211,20 +166,20 @@ def perform_training():
         for i in tqdm(range(EPOCHS)):
             generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
             caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)
+            caption_model.save_weights(os.path.join('./model', f'caption-model30kv2-LR1-{i}.hdf5'))
 
         caption_model.optimizer.lr = 1e-4
         number_pics_per_bath = 6
         steps = len(train_descriptions) // number_pics_per_bath
-        for i in range(EPOCHS):
+        for i in tqdm(range(EPOCHS)):
             generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
             caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)  
+            caption_model.save_weights(os.path.join('./model', f'caption-model30kv2-LR2-{i}.hdf5'))
         
         caption_model.save_weights(model_path)
         log.warning(f'Training took: {hms_string(time()-start)}')
     else:
-        caption_model.load_weights(model_path)
-
-    generate_test_set_captions(encodding_test, word_to_idx, idx_to_word, max_length, caption_model)
+        print('Such file already exists, training aborted.')
 
 
 if __name__ == '__main__':
