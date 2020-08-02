@@ -1,6 +1,7 @@
 import numpy as np
 import logging
 import os
+import pickle
 
 from tqdm import tqdm
 from time import time
@@ -19,6 +20,7 @@ from sklearn.model_selection import train_test_split
 
 import matplotlib.pyplot as plt
 import glob
+import nltk.translate.bleu_score as bleu
 
 
 logging.basicConfig(level='WARNING')
@@ -31,6 +33,12 @@ EPOCHS = 10
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
 UNK_TOKEN = '<unk>'
+
+PICKLES_DIR = './pickles'
+FLICKR_FOLDER = '../data/flickr30'
+FLICKR_IMAGES_FOLDER = 'flickr30k_images'
+EMBEDDINGS_FILE = '../embeddings/glove.6B.200d.txt'
+MODEL_FOLDER = './model'
 
 
 def hms_string(sec_elapsed):
@@ -91,30 +99,73 @@ def load_glove_embeddings(glove_file):
 
 def generate_image_encoddings(images, images_folder):
     image_preprocessor = ImagePreprocessor()
-    image_encoddings = image_preprocessor.run(images, images_folder, './pickles/image_encodings_all_30k.pkl')
+    image_encoddings = image_preprocessor.run(images, images_folder, os.path.join(PICKLES_DIR, 'image_encodings_all_30k.pkl'))
+    datasets_pickle_file = os.path.join(PICKLES_DIR, 'datasets_30k.pkl')
 
-    # Datasets separation
-    # We use the same training set all the time since the vocabulary is created based on it
-    # Can be modified in the future => not to load everything when only in predict mode
-    training_offset = int(len(images) * 0.8)
-    images_train = images[0: training_offset]
-    images_test = images[training_offset:]
+    if os.path.exists(datasets_pickle_file):
+        with open(datasets_pickle_file, 'rb') as fp:
+            datasets = pickle.load(fp)
+            images_train, images_test, images_valid = datasets['training'], datasets['test'], datasets['validation']
+    else:
+        images = list(image_encoddings.keys())
+        images_train, images_test_vld = train_test_split(images, train_size=0.8)
+        images_test, images_valid = train_test_split(images_test_vld, train_size=0.5)
+
+        with open(os.path.join(PICKLES_DIR, 'datasets_30k.pkl'), "wb") as fp:
+            pickle.dump({
+                'training': images_train,
+                'test': images_test,
+                'validation': images_valid
+            }, fp)
     
     encodding_train = {img: enc for img, enc in tqdm(image_encoddings.items()) if img in images_train}
     encodding_test = {img: enc for img, enc in tqdm(image_encoddings.items()) if img in images_test}
+    encodding_valid = {img: enc for img, enc in tqdm(image_encoddings.items()) if img in images_valid}
     log.warning(f'Training images: {len(encodding_train)}')
     log.warning(f'Test images: {len(encodding_test)}')
+    log.warning(f'Validation images: {len(encodding_valid)}')
 
-    return encodding_train, encodding_test
+    return encodding_train, encodding_test, encodding_valid
+
+
+def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, caption_model):
+    in_text = START_TOKEN
+    for i in range(max_length):
+        sequence = [word_to_idx[w] for w in in_text.split() if w in word_to_idx]
+        sequence = pad_sequences([sequence], maxlen=max_length)
+        yhat = caption_model.predict([image_encodding, sequence], verbose=0)
+        yhat = np.argmax(yhat)
+        word = idx_to_word[yhat]
+        in_text += ' ' + word
+        if word == END_TOKEN:
+            break
+
+    final = list(filter(lambda token: token not in {START_TOKEN, END_TOKEN, UNK_TOKEN}, in_text.split()))
+    final = ' '.join(final)
+    return final
+
+
+def calculate_bleu_score(caption_model, dataset_encoddings, lookup_table, word_to_idx, idx_to_word, max_length):
+    bleu_sum = 0
+    for image_key in tqdm(list(dataset_encoddings.keys())):
+        image = dataset_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
+        generated_caption = generate_caption(image, word_to_idx, idx_to_word, max_length, caption_model)
+
+        candidate = generated_caption.split()
+        references = list(map(lambda caption: caption.split(), lookup_table[image_key]))
+        bleu_sum +=  bleu.sentence_bleu(references, candidate)
     
+    return bleu_sum / len(dataset_encoddings)
+
 
 def perform_training():
     # Text preprocessing
-    text_preprocessor = TextPreprocessor('../data/flickr30/results.csv')
+    text_preprocessor = TextPreprocessor(os.path.join(FLICKR_FOLDER, 'results.csv'))
     lookup_table = text_preprocessor.load_and_process_descriptions()
 
     # Create/load image embeddings from InceptionV3
-    encodding_train, encodding_test = generate_image_encoddings(list(lookup_table.keys()), '../data/flickr30/flickr30k_images')
+    encodding_train, encodding_test, encodding_valid = generate_image_encoddings(list(lookup_table.keys()),
+                                                                                 os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER))
     train_descriptions = text_preprocessor.create_training_setup(set(encodding_train.keys()))
     
     vocab = text_preprocessor.get_vocab()
@@ -124,7 +175,7 @@ def perform_training():
     max_length = text_preprocessor.get_max_length()
 
     # Load Glove embeddings
-    word_embeddings = load_glove_embeddings('../embeddings/glove.6B.200d.txt')
+    word_embeddings = load_glove_embeddings(EMBEDDINGS_FILE)
     embedding_matrix = np.zeros((vocab_size, EMBEDDING_DIM))
     for word, i in word_to_idx.items():
         embedding_vector = word_embeddings.get(word)
@@ -157,26 +208,33 @@ def perform_training():
     # caption_model.summary()
     
     # Actual training
-    model_path = os.path.join('./model', 'caption-model30kv2.hdf5')
+    model_path = os.path.join(MODEL_FOLDER, 'caption-model30k.hdf5')
     if not os.path.exists(model_path):
         start = time()
 
+        caption_model.optimizer.lr = 1e-2
         number_pics_per_bath = 3
         steps = len(train_descriptions) // number_pics_per_bath
         for i in tqdm(range(EPOCHS)):
             generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
             caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)
-            caption_model.save_weights(os.path.join('./model', f'caption-model30kv2-LR1-{i}.hdf5'))
+            caption_model.save_weights(os.path.join(MODEL_FOLDER, f'caption-model30k-snap-{i}.hdf5'))
+            test_bleu_score = calculate_bleu_score(caption_model, encodding_test, lookup_table, word_to_idx, idx_to_word, max_length)
+            log.warning(f'Test set BLEU score: {test_bleu_score}')
 
-        caption_model.optimizer.lr = 1e-4
+        caption_model.optimizer.lr = 1e-3
         number_pics_per_bath = 6
         steps = len(train_descriptions) // number_pics_per_bath
         for i in tqdm(range(EPOCHS)):
             generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
             caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)  
-            caption_model.save_weights(os.path.join('./model', f'caption-model30kv2-LR2-{i}.hdf5'))
-        
+            caption_model.save_weights(os.path.join(MODEL_FOLDER, f'caption-model30k-snap-{i}.hdf5'))
+            test_bleu_score = calculate_bleu_score(caption_model, encodding_test, lookup_table, word_to_idx, idx_to_word, max_length)
+            log.warning(f'Test set BLEU score: {test_bleu_score}')
+
         caption_model.save_weights(model_path)
+        valid_bleu_score = calculate_bleu_score(caption_model, encodding_valid, lookup_table, word_to_idx, idx_to_word, max_length)
+        log.warning(f'Validation set BLEU score: {valid_bleu_score}')
         log.warning(f'Training took: {hms_string(time()-start)}')
     else:
         print('Such file already exists, training aborted.')

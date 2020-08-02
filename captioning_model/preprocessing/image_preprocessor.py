@@ -58,6 +58,14 @@ class ImagePreprocessor:
         
         return image_encoddings
 
+    def encode_image(self, image_path):
+        if os.path.exists(image_path):
+            img = tensorflow.keras.preprocessing.image.load_img(image_path, target_size=(HEIGHT, WIDTH))
+            return self._encode_image(img)
+
+        log.error(f'No such image path exists: {image_path}!')
+        return None
+
     def _encode_image(self, img):
         # Resize the image to fit into the expected input of the encoding InceptionV3
         img = img.resize((WIDTH, HEIGHT), Image.ANTIALIAS)

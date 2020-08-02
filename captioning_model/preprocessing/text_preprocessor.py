@@ -2,6 +2,7 @@ import string
 from tqdm import tqdm
 import logging
 import pickle
+import os
 
 
 logging.basicConfig(level='WARNING')
@@ -13,6 +14,8 @@ WORD_OCCURANCE_LIMIT = 10
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
 UNK_TOKEN = '<unk>'
+
+PICKLES_FOLDER = './pickles'
 
 
 class TextPreprocessor:
@@ -124,6 +127,6 @@ class TextPreprocessor:
             'lookup': self.lookup
         }
 
-        with open('./pickles/vocab_30k.pkl', "wb") as fp:
+        with open(os.path.join(PICKLES_FOLDER, 'vocab_30k.pkl'), "wb") as fp:
             pickle.dump(pickle_obj, fp)
         log.warning(f'VOCAB saved as pickle file!')

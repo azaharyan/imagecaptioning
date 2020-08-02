@@ -1,3 +1,5 @@
+import sys
+
 import logging
 logging.basicConfig(level='WARNING')
 log = logging.getLogger(__name__)
@@ -5,6 +7,7 @@ log = logging.getLogger(__name__)
 
 import numpy as np
 import pickle
+import argparse
 
 import os
 from tqdm import tqdm
@@ -53,41 +56,31 @@ def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, capt
     return final
 
 
-def generate_test_set_captions(test_img_encoddings, word_to_idx, idx_to_word, max_length, caption_model, lookup_table):
-    for image_key in list(test_img_encoddings.keys())[0:10]:
-        image_path = os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER, image_key + '.jpg')
+def generate_captions(img_encoddings, word_to_idx, idx_to_word, max_length, caption_model, lookup_table, show_plot):
+    for image_path in list(img_encoddings.keys()):
         if os.path.exists(image_path):
-            image = test_img_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
-            x=plt.imread(image_path)
+            image = img_encoddings[image_path].reshape(1, IMAGE_OUTPUT_DIM)
             generated_caption = generate_caption(image, word_to_idx, idx_to_word, max_length, caption_model)
-            candidate = generated_caption.split()
+            print("Image: ", image_path)
             print("Generated caption: ", generated_caption)
-            print("Original caption: ", lookup_table[image_key][0])
-            references = list(map(lambda caption: caption.split(), lookup_table[image_key]))
-            print(references)
-            print(candidate)
-            print("BLEU score: ", bleu.sentence_bleu(references, candidate))
-            plt.imshow(x)
-            plt.show()
+            
+            if show_plot:
+                x = plt.imread(image_path)
+                plt.imshow(x)
+                plt.show()
             print("_____________________________________")
 
 
-def generate_image_encoddings(images, images_folder):
+def generate_image_encoddings(image_paths):
     image_preprocessor = ImagePreprocessor()
-    image_encoddings = image_preprocessor.run(images, images_folder, os.path.join(PICKLES_FOLDER, 'image_encodings_all_30k.pkl'))
+    image_encoddings = {}
+    for image_path in image_paths:
+        image_encoddings[image_path] = image_preprocessor.encode_image(image_path)
 
-    with open(os.path.join(PICKLES_FOLDER, 'datasets_30k.pkl'), 'rb') as fp:
-        datasets = pickle.load(fp)
-    images_test = datasets['test']
-    
-    np.random.shuffle(images_test)
-    encodding_test = {img: image_encoddings[img] for img in tqdm(images_test) if img in image_encoddings}
-    print(f'Test images: {len(encodding_test)}')
-
-    return encodding_test
+    return image_encoddings
 
 
-def perform_test():
+def predict_captions(image_paths, show_plot):
     # Load vocab and images
     with open(os.path.join(PICKLES_FOLDER, 'vocab_30k.pkl'), "rb") as fp:
         vocab_info = pickle.load(fp)
@@ -95,7 +88,7 @@ def perform_test():
     max_length = vocab_info['max_length']
     vocab_size = len(vocab_info['vocab'])
 
-    encodding_test = generate_image_encoddings(list(lookup.keys()), os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER))
+    image_encoddings = generate_image_encoddings(image_paths)
 
     # Model creation
     inputs1 = Input(shape=(IMAGE_OUTPUT_DIM,))
@@ -115,13 +108,19 @@ def perform_test():
     model_path = os.path.join(MODEL_FOLDER, 'caption-model30k-snap-0.hdf5')
     caption_model.load_weights(model_path)
 
-    generate_test_set_captions(test_img_encoddings=encodding_test,
+    generate_captions(img_encoddings=image_encoddings,
                                word_to_idx=vocab_info['word_to_idx'],
                                idx_to_word=vocab_info['idx_to_word'],
                                max_length=max_length,
                                caption_model=caption_model,
-                               lookup_table=lookup)
+                               lookup_table=lookup,
+                               show_plot=show_plot)
 
 
 if __name__ == '__main__':
-    perform_test()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-images', nargs='+', required=True, help='List of image paths for caption generation.')
+    parser.add_argument('--plot', action='store_true', dest='plot', default=False, help='If specified plots will be shown.')
+    args = parser.parse_args()
+
+    predict_captions(args.images, args.plot)
