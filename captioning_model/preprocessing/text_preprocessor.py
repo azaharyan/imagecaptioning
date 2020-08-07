@@ -8,8 +8,8 @@ import os
 logging.basicConfig(level='WARNING')
 log = logging.getLogger(__name__)
 
-DESCRIPTION_LIMIT = 50
-WORD_OCCURANCE_LIMIT = 10
+DESCRIPTION_LIMIT = 32
+WORD_OCCURANCE_LIMIT = 30
 
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'

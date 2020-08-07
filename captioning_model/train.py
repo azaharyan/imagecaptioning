@@ -19,8 +19,10 @@ from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
 
 import matplotlib.pyplot as plt
+import tensorflow as tf
 import glob
 import nltk.translate.bleu_score as bleu
+import datetime
 
 
 logging.basicConfig(level='WARNING')
@@ -29,7 +31,7 @@ log = logging.getLogger(__name__)
 
 EMBEDDING_DIM = 200
 IMAGE_OUTPUT_DIM = 2048
-EPOCHS = 10
+EPOCHS = 30
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
 UNK_TOKEN = '<unk>'
@@ -46,6 +48,27 @@ def hms_string(sec_elapsed):
     m = int((sec_elapsed % (60 * 60)) / 60)
     s = sec_elapsed % 60
     return f"{h}:{m:>02}:{s:>05.2f}"
+
+
+class BleuEvaluationCallback(tf.keras.callbacks.Callback):
+    def __init__(self, encodding_test, lookup_table, word_to_idx, idx_to_word, max_length, epoch_steps):
+        self.encodding_test = encodding_test
+        self.lookup_table = lookup_table
+        self.word_to_idx = word_to_idx
+        self.idx_to_word = idx_to_word
+        self.max_length = max_length
+        self.epoch_steps = epoch_steps
+
+    def on_epoch_end(self, epoch, logs=None):
+        test_bleu_score = calculate_bleu_score(self.model,
+                                               self.encodding_test,
+                                               self.lookup_table,
+                                               self.word_to_idx,
+                                               self.idx_to_word,
+                                               self.max_length)
+        log.warning(f'Test set BLEU score: {test_bleu_score}')
+        tf.summary.scalar('learning rate', data=self.model.optimizer.lr(self.epoch_steps * (epoch + 1)), step=epoch)
+        tf.summary.scalar('BLEU test set', data=test_bleu_score, step=epoch)
 
 
 def data_generator(descriptions, image_encoddings, word_to_idx, max_length, vocab_size, num_photos_per_batch):
@@ -108,8 +131,13 @@ def generate_image_encoddings(images, images_folder):
             images_train, images_test, images_valid = datasets['training'], datasets['test'], datasets['validation']
     else:
         images = list(image_encoddings.keys())
-        images_train, images_test_vld = train_test_split(images, train_size=0.8)
+        images_train, images_test_vld = train_test_split(images, train_size=0.95)
         images_test, images_valid = train_test_split(images_test_vld, train_size=0.5)
+
+        # Testing purposes
+        # images_train = images_train[0: len(images_train) // 10]
+        # images_test = images_test[0: len(images_test) // 10]
+        # images_valid = images_test[0: len(images_valid) // 10]
 
         with open(os.path.join(PICKLES_DIR, 'datasets_30k.pkl'), "wb") as fp:
             pickle.dump({
@@ -146,14 +174,21 @@ def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, capt
 
 
 def calculate_bleu_score(caption_model, dataset_encoddings, lookup_table, word_to_idx, idx_to_word, max_length):
+    example_count = 0
     bleu_sum = 0
-    for image_key in tqdm(list(dataset_encoddings.keys())):
+    for image_key in tqdm(list(dataset_encoddings.keys()), position=0, leave=True):
         image = dataset_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
         generated_caption = generate_caption(image, word_to_idx, idx_to_word, max_length, caption_model)
 
         candidate = generated_caption.split()
         references = list(map(lambda caption: caption.split(), lookup_table[image_key]))
-        bleu_sum +=  bleu.sentence_bleu(references, candidate)
+        bleu_score = bleu.sentence_bleu(references, candidate)
+        bleu_sum +=  bleu_score
+
+        if example_count < 5:
+            log.warning(f'Image: {image_key}\nreal caption: {lookup_table[image_key][0]}\ngenerated caption: {generated_caption}\nBLEU: {bleu_score}')
+            log.warning("********************************************************************")
+            example_count += 1
     
     return bleu_sum / len(dataset_encoddings)
 
@@ -189,12 +224,12 @@ def perform_training():
 
     # Model creation
     inputs1 = Input(shape=(IMAGE_OUTPUT_DIM,))
-    fe1 = Dropout(0.5)(inputs1)
+    fe1 = Dropout(0.3)(inputs1)
     fe2 = Dense(256, activation='relu')(fe1)
     inputs2 = Input(shape=(max_length,))
     # Mask zero = True is introduced because of the padding
     se1 = Embedding(vocab_size, EMBEDDING_DIM, mask_zero=True)(inputs2)
-    se2 = Dropout(0.5)(se1)
+    se2 = Dropout(0.3)(se1)
     se3 = LSTM(256)(se2)
     decoder1 = add([fe2, se3])
     decoder2 = Dense(256, activation='relu')(decoder1)
@@ -202,37 +237,45 @@ def perform_training():
     caption_model = Model(inputs=[inputs1, inputs2], outputs=outputs)
 
     caption_model.layers[2].set_weights([embedding_matrix])
-    caption_model.layers[2].trainable = False
-    # Default learning rate of 0.001
-    caption_model.compile(loss='categorical_crossentropy', optimizer='adam')
-    # caption_model.summary()
+    caption_model.layers[2].trainable = True
+
+    initial_learning_rate = 0.001
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate,
+        decay_steps=3000,
+        decay_rate=0.96,
+        staircase=True
+    )
+    caption_model.compile(loss=tf.keras.losses.categorical_crossentropy, optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule))
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(os.path.join(MODEL_FOLDER, "best_model30k.hdf5"),
+                                                    monitor='loss',
+                                                    verbose=1,
+                                                    save_best_only=True,
+                                                    mode='auto',
+                                                    period=1)
     
     # Actual training
+    number_pics_per_bath = 6
     model_path = os.path.join(MODEL_FOLDER, 'caption-model30k.hdf5')
     if not os.path.exists(model_path):
         start = time()
-
-        caption_model.optimizer.lr = 1e-2
-        number_pics_per_bath = 3
         steps = len(train_descriptions) // number_pics_per_bath
-        for i in tqdm(range(EPOCHS)):
-            generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
-            caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)
-            caption_model.save_weights(os.path.join(MODEL_FOLDER, f'caption-model30k-snap-{i}.hdf5'))
-            test_bleu_score = calculate_bleu_score(caption_model, encodding_test, lookup_table, word_to_idx, idx_to_word, max_length)
-            log.warning(f'Test set BLEU score: {test_bleu_score}')
+        
+        #Tensorboard logging
+        log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+        file_writer = tf.summary.create_file_writer(log_dir + "/metrics")
+        file_writer.set_as_default()
 
-        caption_model.optimizer.lr = 1e-3
-        number_pics_per_bath = 6
-        steps = len(train_descriptions) // number_pics_per_bath
-        for i in tqdm(range(EPOCHS)):
-            generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
-            caption_model.fit(generator, epochs=1, steps_per_epoch=steps, verbose=1)  
-            caption_model.save_weights(os.path.join(MODEL_FOLDER, f'caption-model30k-snap-{i}.hdf5'))
-            test_bleu_score = calculate_bleu_score(caption_model, encodding_test, lookup_table, word_to_idx, idx_to_word, max_length)
-            log.warning(f'Test set BLEU score: {test_bleu_score}')
-
+        # Training
+        generator = data_generator(train_descriptions, encodding_train, word_to_idx, max_length, vocab_size, number_pics_per_bath)
+        caption_model.fit(generator,
+                          epochs=EPOCHS,
+                          steps_per_epoch=steps,
+                          verbose=1,
+                          callbacks=[checkpoint, tensorboard_callback, BleuEvaluationCallback(encodding_test, lookup_table, word_to_idx, idx_to_word, max_length, steps)])
         caption_model.save_weights(model_path)
+
         valid_bleu_score = calculate_bleu_score(caption_model, encodding_valid, lookup_table, word_to_idx, idx_to_word, max_length)
         log.warning(f'Validation set BLEU score: {valid_bleu_score}')
         log.warning(f'Training took: {hms_string(time()-start)}')

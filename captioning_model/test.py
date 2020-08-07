@@ -54,7 +54,7 @@ def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, capt
 
 
 def generate_test_set_captions(test_img_encoddings, word_to_idx, idx_to_word, max_length, caption_model, lookup_table):
-    for image_key in list(test_img_encoddings.keys())[0:10]:
+    for image_key in list(test_img_encoddings.keys())[0:100]:
         image_path = os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER, image_key + '.jpg')
         if os.path.exists(image_path):
             image = test_img_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
@@ -112,7 +112,7 @@ def perform_test():
     caption_model = Model(inputs=[inputs1, inputs2], outputs=outputs)
 
     caption_model.compile(loss='categorical_crossentropy', optimizer='adam')
-    model_path = os.path.join(MODEL_FOLDER, 'caption-model30k-snap-0.hdf5')
+    model_path = os.path.join(MODEL_FOLDER, 'best_model30k.hdf5')
     caption_model.load_weights(model_path)
 
     generate_test_set_captions(test_img_encoddings=encodding_test,

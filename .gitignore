@@ -133,3 +133,4 @@ data/
 embeddings/*.txt
 pickles/
 model/
+logs/
