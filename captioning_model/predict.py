@@ -105,7 +105,7 @@ def predict_captions(image_paths, show_plot):
     caption_model = Model(inputs=[inputs1, inputs2], outputs=outputs)
 
     caption_model.compile(loss='categorical_crossentropy', optimizer='adam')
-    model_path = os.path.join(MODEL_FOLDER, 'caption-model30k-snap-0.hdf5')
+    model_path = os.path.join(MODEL_FOLDER, 'best_model30k.hdf5')
     caption_model.load_weights(model_path)
 
     generate_captions(img_encoddings=image_encoddings,

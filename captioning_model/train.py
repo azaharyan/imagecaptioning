@@ -182,7 +182,7 @@ def calculate_bleu_score(caption_model, dataset_encoddings, lookup_table, word_t
 
         candidate = generated_caption.split()
         references = list(map(lambda caption: caption.split(), lookup_table[image_key]))
-        bleu_score = bleu.sentence_bleu(references, candidate)
+        bleu_score = bleu.sentence_bleu(references, candidate, smoothing_function=bleu.SmoothingFunction().method1)
         bleu_sum +=  bleu_score
 
         if example_count < 5:
@@ -242,9 +242,9 @@ def perform_training():
     initial_learning_rate = 0.001
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         initial_learning_rate,
-        decay_steps=3000,
+        decay_steps=4000,
         decay_rate=0.96,
-        staircase=True
+        staircase=False
     )
     caption_model.compile(loss=tf.keras.losses.categorical_crossentropy, optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule))
     checkpoint = tf.keras.callbacks.ModelCheckpoint(os.path.join(MODEL_FOLDER, "best_model30k.hdf5"),

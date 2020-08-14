@@ -66,7 +66,7 @@ def generate_test_set_captions(test_img_encoddings, word_to_idx, idx_to_word, ma
             references = list(map(lambda caption: caption.split(), lookup_table[image_key]))
             print(references)
             print(candidate)
-            print("BLEU score: ", bleu.sentence_bleu(references, candidate))
+            print("BLEU score: ", bleu.sentence_bleu(references, candidate, smoothing_function=bleu.SmoothingFunction().method1))
             plt.imshow(x)
             plt.show()
             print("_____________________________________")

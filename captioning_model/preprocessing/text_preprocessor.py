@@ -9,7 +9,7 @@ logging.basicConfig(level='WARNING')
 log = logging.getLogger(__name__)
 
 DESCRIPTION_LIMIT = 32
-WORD_OCCURANCE_LIMIT = 30
+WORD_OCCURANCE_LIMIT = 10
 
 START_TOKEN = '<start>'
 END_TOKEN = '<end>'
@@ -38,7 +38,7 @@ class TextPreprocessor:
                     # Remove very short words, punctuation and clear description
                     desc = [word.lower().strip() for word in desc]
                     desc = [w.translate(null_punct) for w in desc]
-                    desc = [word for word in desc if len(word) > 1]
+                    # desc = [word for word in desc if len(word) > 1]
                     desc = [word for word in desc if word.isalpha()]
 
                     if len(desc) <= DESCRIPTION_LIMIT:
