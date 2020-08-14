@@ -69,6 +69,8 @@ class BleuEvaluationCallback(tf.keras.callbacks.Callback):
         log.warning(f'Test set BLEU score: {test_bleu_score}')
         tf.summary.scalar('learning rate', data=self.model.optimizer.lr(self.epoch_steps * (epoch + 1)), step=epoch)
         tf.summary.scalar('BLEU test set', data=test_bleu_score, step=epoch)
+        model_path = os.path.join(MODEL_FOLDER, f'caption-model30k.epoch{epoch}.hdf5')
+        self.model.save_weights(model_path)
 
 
 def data_generator(descriptions, image_encoddings, word_to_idx, max_length, vocab_size, num_photos_per_batch):
@@ -133,11 +135,6 @@ def generate_image_encoddings(images, images_folder):
         images = list(image_encoddings.keys())
         images_train, images_test_vld = train_test_split(images, train_size=0.95)
         images_test, images_valid = train_test_split(images_test_vld, train_size=0.5)
-
-        # Testing purposes
-        # images_train = images_train[0: len(images_train) // 10]
-        # images_test = images_test[0: len(images_test) // 10]
-        # images_valid = images_test[0: len(images_valid) // 10]
 
         with open(os.path.join(PICKLES_DIR, 'datasets_30k.pkl'), "wb") as fp:
             pickle.dump({
