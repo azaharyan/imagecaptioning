@@ -41,6 +41,6 @@ Here you can see some plots from Tensorboard which show 50 epoch training with l
 ## Loss
 ![Loss](doc_images/Loss.png)
 ## BLEU score
-![Loss](doc_images/BLEU.png)
+![Bleu score](doc_images/BLEU.png)
 ## Learning rate
-![Loss](doc_images/LearningRate.png)
+![Learning rate](doc_images/LearningRate.png)
