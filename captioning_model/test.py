@@ -34,6 +34,7 @@ PICKLES_FOLDER = './pickles'
 MODEL_FOLDER = './model'
 FLICKR_FOLDER = '../data/flickr30'
 FLICKR_IMAGES_FOLDER = 'flickr30k_images'
+SHOW_ATTEND_TELL_CAPTIONS = '../data/flickr30/SAT30k_results.csv'
 
 
 def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, caption_model):
@@ -52,24 +53,52 @@ def generate_caption(image_encodding, word_to_idx, idx_to_word, max_length, capt
     final = ' '.join(final)
     return final
 
+def load_show_attend_and_tell_captions():
+    sat_captions = {}
+    with open(SHOW_ATTEND_TELL_CAPTIONS, 'r') as captionsFile:
+        for line in tqdm(captionsFile.read().splitlines()):
+            section = line.split(',')
+            image_key = section[1].split('/')[-1].split('.')[0]
+            caption = section[2][0:-1]
 
-def generate_test_set_captions(test_img_encoddings, word_to_idx, idx_to_word, max_length, caption_model, lookup_table):
-    for image_key in list(test_img_encoddings.keys())[0:100]:
+            sat_captions[image_key] = caption
+
+    return sat_captions
+
+def calculate_dataset_bleu(img_encoddings, word_to_idx, idx_to_word, max_length, caption_model, lookup_table):
+    sat_captions = load_show_attend_and_tell_captions()
+    sat_bleu_average = 0
+    bleu_average = 0
+    count = 0
+
+    for image_key in tqdm(img_encoddings.keys()):
         image_path = os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER, image_key + '.jpg')
         if os.path.exists(image_path):
-            image = test_img_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
-            x=plt.imread(image_path)
+            count += 1
+            image = img_encoddings[image_key].reshape(1, IMAGE_OUTPUT_DIM)
             generated_caption = generate_caption(image, word_to_idx, idx_to_word, max_length, caption_model)
-            candidate = generated_caption.split()
-            print("Generated caption: ", generated_caption)
-            print("Original caption: ", lookup_table[image_key][0])
+            sat_caption = sat_captions[image_key]
+            
             references = list(map(lambda caption: caption.split(), lookup_table[image_key]))
-            print(references)
-            print(candidate)
-            print("BLEU score: ", bleu.sentence_bleu(references, candidate, smoothing_function=bleu.SmoothingFunction().method1))
-            plt.imshow(x)
-            plt.show()
-            print("_____________________________________")
+            generated_caption_bleu = bleu.sentence_bleu(references, generated_caption.split(), smoothing_function=bleu.SmoothingFunction().method3)
+            bleu_average += generated_caption_bleu
+            sat_caption_bleu = bleu.sentence_bleu(references, sat_caption.split(), smoothing_function=bleu.SmoothingFunction().method3)
+            sat_bleu_average += sat_caption_bleu
+
+            if count <= 2:
+                print("Generated caption: ", generated_caption)
+                print("SAT caption: ", sat_caption)
+                print("Original caption: ", lookup_table[image_key][0])
+                print("SAT caption BLEU score: ", sat_caption_bleu)
+                print("Generated caption BLEU score: ", generated_caption_bleu)
+
+                x=plt.imread(image_path)
+                plt.imshow(x)
+                plt.show()
+                print("_____________________________________")
+    
+    print('Model validation set BLEU: ', bleu_average / count)
+    print('SAT validation set BLEU: ', sat_bleu_average / count)
 
 
 def generate_image_encoddings(images, images_folder):
@@ -78,13 +107,13 @@ def generate_image_encoddings(images, images_folder):
 
     with open(os.path.join(PICKLES_FOLDER, 'datasets_30k.pkl'), 'rb') as fp:
         datasets = pickle.load(fp)
-    images_test = datasets['test']
+    images_test = datasets['validation']
     
     np.random.shuffle(images_test)
-    encodding_test = {img: image_encoddings[img] for img in tqdm(images_test) if img in image_encoddings}
-    print(f'Test images: {len(encodding_test)}')
+    encodding_vld = {img: image_encoddings[img] for img in tqdm(images_test) if img in image_encoddings}
+    print(f'Validation images: {len(encodding_vld)}')
 
-    return encodding_test
+    return encodding_vld
 
 
 def perform_test():
@@ -95,7 +124,7 @@ def perform_test():
     max_length = vocab_info['max_length']
     vocab_size = len(vocab_info['vocab'])
 
-    encodding_test = generate_image_encoddings(list(lookup.keys()), os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER))
+    encodding_vld = generate_image_encoddings(list(lookup.keys()), os.path.join(FLICKR_FOLDER, FLICKR_IMAGES_FOLDER))
 
     # Model creation
     inputs1 = Input(shape=(IMAGE_OUTPUT_DIM,))
@@ -112,10 +141,10 @@ def perform_test():
     caption_model = Model(inputs=[inputs1, inputs2], outputs=outputs)
 
     caption_model.compile(loss='categorical_crossentropy', optimizer='adam')
-    model_path = os.path.join(MODEL_FOLDER, 'best_model30k.hdf5')
+    model_path = os.path.join(MODEL_FOLDER, 'caption-model30k.hdf5')
     caption_model.load_weights(model_path)
 
-    generate_test_set_captions(test_img_encoddings=encodding_test,
+    calculate_dataset_bleu(img_encoddings=encodding_vld,
                                word_to_idx=vocab_info['word_to_idx'],
                                idx_to_word=vocab_info['idx_to_word'],
                                max_length=max_length,
